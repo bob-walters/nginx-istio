@@ -1,0 +1,148 @@
+apiVersion: helm.fluxcd.io/v1
+kind: HelmRelease
+metadata:
+  name: ingress-nginx-v4
+  namespace: ingress
+spec:
+  releaseName: ingress-nginx-v4
+  chart:
+    repository: https://kubernetes.github.io/ingress-nginx
+    name: ingress-nginx
+    # version: 3.30.0
+  values:
+    ## nginx configuration
+    ## Ref: https://github.com/kubernetes/ingress/blob/master/controllers/nginx/configuration.md
+    ##
+    controller:
+      name: controller
+      # image:
+      #   registry: k8s.gcr.io
+      #   image: ingress-nginx/controller
+      #   tag: "v1.1.0"
+      #   digest: sha256:f766669fdcf3dc26347ed273a55e754b427eb4411ee075a53f30718b4499076a
+      #   pullPolicy: IfNotPresent
+
+      # Will add custom configuration options to Nginx https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/
+      config:
+        http-snippet: |
+          more_set_headers "X-Request-ID: $req_id";
+
+        server-snippet: |
+          location ~ \.(php|asp|aspx|ASP|htm|rar|zip|gz|sql|jsp|cgi|cfm|swf|rb|pl)$ { return 403; }
+          location ~ /(wp-admin|wp-includes|wp-content) { return 403; }
+          location ~ ^/\.git/  { return 404; }
+
+        skip-access-log-urls: "/nginx_status/format/json"
+        log-format-escape-json: "True"
+        log-format-upstream: '{ "time_iso": "$time_iso8601","msec": "$msec","request_id":
+          "$req_id","tsw_tracking_id": "$http_x_tracking_id", "ingress": "$ingress_name","namespace":
+          "$namespace", "web": { "host": "$host", "remote_addr": "$remote_addr","remote_user":
+          "$remote_user", "duration": $request_time,"request": "$uri", "args": "$args","request_length":
+          $request_length, "request_method": "$request_method", "status": $status,
+          "response_size": $bytes_sent,"response_body_size": $body_bytes_sent, "method":
+          "$request_method","user_agent": "$http_user_agent", "referer": "$http_referer","scheme":
+          "$scheme","protocol": "$server_protocol", "forwarded_for": "$proxy_add_x_forwarded_for",
+          "ssl_protocol": "$ssl_protocol", "ssl_cipher": "$ssl_cipher", "upstreams":
+          {"address": "$upstream_addr","status": "$upstream_status","connect_time":
+          "$upstream_connect_time", "response_time": "$upstream_response_time","header_time":
+          "$upstream_header_time" } }}'
+
+
+      # Will add custom headers before sending traffic to backends according to https://github.com/kubernetes/ingress-nginx/tree/master/docs/examples/customization/custom-headers
+      proxySetHeaders: {}
+
+      ## Name of the ingress class to route through this controller
+      # This section refers to the creation of the IngressClass resource
+      # IngressClass resources are supported since k8s >= 1.18 and required since k8s >= 1.19
+      ingressClassResource:
+        name: nginx
+        enabled: true
+
+      ## Node labels for controller pod assignment
+      ## Ref: https://kubernetes.io/docs/user-guide/node-selection/
+      ##
+      nodeSelector: {}
+
+      ## Annotations to be added to configure Istio sidecar
+      podAnnotations:
+        traffic.sidecar.istio.io/includeInboundPorts: ""
+        traffic.sidecar.istio.io/excludeInboundPorts: "80,443"
+        traffic.sidecar.istio.io/excludeOutboundPorts: "443"
+
+      replicaCount: 1
+      minAvailable: 1
+
+      resources:
+        requests:
+          cpu: 25m
+          memory: 200Mi
+
+      service:
+        enabled: true
+
+        ports:
+          http: 80
+          https: 443
+
+        targetPorts:
+          http: http
+          https: https
+
+        # For Docker desktop clusters, "LoadBalancer" types are exposed at localhost, using
+        # a NodePort that is selected
+        type: LoadBalancer
+
+      admissionWebhooks:
+        enabled: false
+        failurePolicy: Fail
+        port: 8443
+
+        patch:
+          enabled: true
+          podAnnotations:
+            sidecar.istio.io/inject: "false"
+
+    ## Default 404 backend
+    ##
+    defaultBackend:
+
+      ## If false, controller.defaultBackendService must be provided
+      ##
+      enabled: true
+
+      name: default-backend
+      image:
+        registry: k8s.gcr.io
+        image: defaultbackend-amd64
+        tag: "1.5"
+        pullPolicy: IfNotPresent
+        # nobody user -> uid 65534
+        runAsUser: 65534
+
+      extraArgs: {}
+
+      serviceAccount:
+        create: true
+
+      port: 8080
+
+      ## Annotations to be added to default backend pods
+      ##
+      podAnnotations:
+        sidecar.istio.io/inject: "true"
+
+      replicaCount: 1
+
+      minAvailable: 0
+
+      service:
+        servicePort: 80
+        type: ClusterIP
+
+    ## Enable RBAC as per https://github.com/kubernetes/ingress/tree/master/examples/rbac/nginx and https://github.com/kubernetes/ingress/issues/266
+    rbac:
+      create: true
+
+    serviceAccount:
+      create: true
+

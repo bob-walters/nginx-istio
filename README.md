@@ -26,26 +26,6 @@ istio-system   istiod-58d79b7bff-jjg56                  1/1     Running   0     
 Note: one consequence of installing istio is that it does declare a service of type "LoadBalancer", which if you are using Docker Desktop, MiniKube or similar, may mean that the istio-ingressgateway becomes bound to the external IP of 'localhost', and that the nginx-ingress service we intend to install (later) will not be directly accessible at http://localhost:80/.  However we can still successfully test the nginx-ingress service using port forwarding, as will be described later.
 
 
-## Install Helm Operator
-
-**TODO - may want to get rid of the need for this!!**
-
-I preferred using the Helm Operator for kubernetes so that HelmReleases can be entirely defined in .yaml files and then installed using `kubectl apply`.
-
-Installation instructions for the K8s helm operator are available [here]()
-
-```
-kubectl apply -f https://raw.githubusercontent.com/fluxcd/helm-operator/1.4.2/deploy/crds.yaml
-
-kubectl create ns flux
-
-helm repo add fluxcd https://charts.fluxcd.io
-
-helm upgrade -i helm-operator fluxcd/helm-operator \
-    --namespace flux \
-    --set helm.versions=v3
-```
-
 ## Install nginx-ingress
 
 I wanted to run the nginx-ingress service under its own K8s namespace to confirm that the routing can work between namespaces (as we use multiple in our production environments)
@@ -68,10 +48,21 @@ kubectl apply -f nginx-ingress-release.yaml
 
 Notes about the spec values:
 
-* The service type is `LoadBalancer` based on the built-in support that Docker Desktop (and Minikube) have for that.  In those environments, this will typically just expose the service via 'localhost'.
-* The release is deployed into the "ingress" namespace
+* The service type is `LoadBalancer` based on the built-in support that Docker Desktop (and Minikube) have for that.  In those environments, this will typically just expose the service via 'localhost'.  But the istio-ingressgateway is probably holding that role, so you may need to use a tunel to submit work to the nginx-ingress gateway if testing this in those environments.
+* The release is deployed into the "ingress" namespace (separate from the namespace where the target services reside.)
 * The Ingress class "nginx" is used to control the K8s Ingress resources which will be used by this ingress controller
 * The Istio sidecar is injected into both the controller and the default backend based on the spec in the ingress namespace.
+
+There are a couple of annotations added to the nginx-ingres which are particularly important for this:
+
+```
+  podAnnotations:
+    traffic.sidecar.istio.io/includeInboundPorts: ""
+    traffic.sidecar.istio.io/excludeInboundPorts: "80,443"
+    traffic.sidecar.istio.io/excludeOutboundPorts: "443"
+```
+
+The intention of the above is to ensure that traffic which is routed into that pod on ports 80 and 443 (i.e. the ingress ports it is meant to serve) do not go through the istio proxy and instead go directly to the controller container (nginx).  The outbound activity is meant to still go through the istio sidecar however.
 
 
 ## Install podinfo-v1 and podinfo-v2
@@ -117,7 +108,7 @@ kubectl apply -f podinfo-ingress-v1.yaml
 
 That will establish an Ingress for both ofthe previous podinfo releases where the routing is determined by the hostname (host header) used in Http requests.
 
-There are two important details (TODO) about this ingress configuration:
+There are two important details about this ingress configuration:
 
 * The annotation `nginx.ingress.kubernetes.io/service-upstream: "true"` is set in order to ensure that the nginx-ingress uses thw cluster IP address, rather than individual pod IP addresses, when forwarding traffic.
 
@@ -210,6 +201,8 @@ If we investigate the ingress defintion, we can see that K8s reports this as inv
 * the nginx-ingress service will, "try" to route traffic to port 80 of the IP address that it can determine based on the ClusterIP, even though the destination appears invalid.
 * At that point, the traffic is routed from the nginx-controller to its sidecar as "outbound" traffic.  (I.e. per the standard way that the istio mesh works)  The sidecar will note that the traffic corresponds to the Host 'podinfo.localhost.com' and port 80, and based on that will apply the VirtualService routing rule based on that matching criteria, which then has the effect of changing the destination and applying the Virtual Service as expected.
 
+
+
 You can see that a request sent to podinfo.localhost.com is assigned randomly (50/50) to one of the two sites, and that a "set-cookie" header is returned to pin the session to that version of the app.
 
 ```
@@ -292,42 +285,28 @@ $ curl -v -H 'Host: podinfo.localhost.com'-H "Cookie: my-site-version=2" localho
 
 I would appreviate any info/insights which might explain why this works / what I am doing wrong / what I should be doing instead.
 
+Some of the above is substantiated by the Istio troubleshoting at https://istio.io/latest/docs/ops/common-problems/network-issues/#route-rules-have-no-effect-on-ingress-gateway-requests.  Best I can determine - if the Ingress rule targets a valid service:port that K8s can handle by itself, then istio doesn't appear to take effect, or the Istio VirtualService needs specific port matching (which I have tried, unsuccessfully) to get the routing working.
+
+For example, here is the routing results that occur based on different 
+
+|Target Port of Ingress Rule|K8s Service Port|Vservice Port|Result|
+|--------|--------|--------|----------|
+|80|9898|-|works as desired|
+|9898|9898|-|routes to K8s Service.  Virtual service has no effect|
+|8080|9898|-|fails: timeout/502 while attempting to invoke service|
+|9898|9898|9898|routes to K8s Service.  Virtual service has no effect|
+|443|9898|-|fails: timeout/502 while attempting to invoke service|
+
+
 I have used my forehead to put a sizeable dent into several walls trying to find a more 'intuitive' (less hacky) configuration for this, and have had no luck.  For the record, my experiments have tried:
 
 * Basing the VirtualService on the internal cluster hostname that ingress is routing to.
 * Using an explicit port value in the rules of the VirtualService (trying to get it to work with something other than port 80)
-* Creating explicit services not backed by any pods which are then the target of the Ingress routing (with the exectation that it would hand-off to 
+* Creating explicit services not backed by any pods which are then the target of the Ingress routing (with the expectation that it would hand-off to Istio in the process.)
+* Adding port 9898 explicily to the `traffic.sidecar.istio.io/includeOutboundPorts` annotation on the nginx-ingress pod.
 
 What I've observed:
+
 * In general, if the ingress routing definition is accurate (i.e. targets a valid service:port combination), then istio doesn't seem to take effect, at least from the point of nginx-ingress to the K8s services.  I have virtual service rules work fine however for service to service routing, this odity only seems to apply to traffic arriving at the nginx-ingress.
-* 
-
-
-# TroubleShooting
-
-Make sure that sidecars are correctly installed into both the nginx-ingress pods and also the pods running the services that you want the istio virtual service to apply to.
-
-```
-$ k get pods --all-namespaces
-
-NAMESPACE      NAME                                                READY   STATUS    RESTARTS   AGE
-default        hello-kubernetes                                    1/1     Running   35         119d
-default        podinfo-v1-6b8898549c-qdr75                         2/2     Running   0          11m
-default        podinfo-v2-f5cb48c4d-tbtbk                          2/2     Running   0          12m
-flux           helm-operator-6854cb98fb-wg2ff                      1/1     Running   6          3d19h
-ingress        ingress-nginx-v4-controller-6c67cf9c68-s7gcd        2/2     Running   0          47m
-ingress        ingress-nginx-v4-default-backend-6dd6fcddcb-4jdv2   2/2     Running   0          47m
-istio-system   istio-ingressgateway-8c48d875-c9nxz                 1/1     Running   4          3d20h
-istio-system   istiod-58d79b7bff-jjg56                             1/1     Running   4          3d20h
-kube-system    coredns-558bd4d5db-4vm4s                            1/1     Running   35         119d
-kube-system    coredns-558bd4d5db-vj4cj                            1/1     Running   35         119d
-kube-system    etcd-docker-desktop                                 1/1     Running   35         119d
-kube-system    kube-apiserver-docker-desktop                       1/1     Running   35         119d
-kube-system    kube-controller-manager-docker-desktop              1/1     Running   35         119d
-kube-system    kube-proxy-9dfn5                                    1/1     Running   35         119d
-kube-system    kube-scheduler-docker-desktop                       1/1     Running   43         119d
-kube-system    storage-provisioner                                 1/1     Running   75         119d
-kube-system    vpnkit-controller                                   1/1     Running   5897       119d
-```
 
 

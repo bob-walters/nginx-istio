@@ -55,7 +55,8 @@ controller:
   podAnnotations:
     traffic.sidecar.istio.io/includeInboundPorts: ""
     traffic.sidecar.istio.io/excludeInboundPorts: "80,443"
-    traffic.sidecar.istio.io/excludeOutboundPorts: "443"
+    traffic.sidecar.istio.io/includeOutboundPorts: "8989"
+    # traffic.sidecar.istio.io/excludeOutboundPorts: "443"
 
   replicaCount: 1
   minAvailable: 1

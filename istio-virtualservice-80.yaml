@@ -10,35 +10,32 @@ metadata:
   namespace: default
 spec:
   hosts:
-    - podinfo-svc-shift.default.svc.cluster.local
+    - "podinfo.localhost.com"
+    - "*.podinfo.localhost.com"
   gateways:
     - mesh
   http:
-    - name: "v1-route-experiment"
+    - name: "v1-route"
       match:
         - headers:
             cookie:
               regex: ^(.*;.?|)(my-site-version=1)(;.*|)$
-          port: 9898
       route:
         - destination:
             host: podinfo-v1.default.svc.cluster.local
             port:
               number: 9898
-    - name: "v2-route-experiment"
+    - name: "v2-route"
       match:
         - headers:
             cookie:
               regex: ^(.*;.?|)(my-site-version=2)(;.*|)$
-          port: 9898
       route:
         - destination:
             host: podinfo-v2.default.svc.cluster.local
             port:
               number: 9898
-    - name: "default-split-v1-v2-routing-experiment"
-      match:
-        - port: 9898
+    - name: "default-split-v1-v2-routing"
       route:
         - destination:
             host: podinfo-v1.default.svc.cluster.local

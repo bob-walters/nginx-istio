@@ -1,0 +1,27 @@
+apiVersion:  networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: podinfo-ingress-experiment
+  namespace: default
+
+  annotations:
+    # This is specified to ensure that nginx will use the K8s service IP for the upstream service
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    # This annotation replaces the Host header on the inbound traffic to the value specified.  
+    # The X-Forwarded-Host remains unchanged (e.g. podinfo.localhost.com)  The value here
+    # must be the full cluster FQDN of the service that the virtual service is associated with
+    nginx.ingress.kubernetes.io/upstream-vhost: podinfo-svc-shift.default.svc.cluster.local
+
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: "podinfo.localhost.com"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: podinfo-svc-shift
+            port:
+              number: 9898

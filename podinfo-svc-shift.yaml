@@ -1,0 +1,22 @@
+---
+# This is actually used as a K8s service destination for Ingress, with actual routing
+# being handled by the Istio virtual service (See 02-istio-routing.yaml)
+apiVersion: v1
+kind: Service
+metadata:
+  name: podinfo-svc-shift
+  namespace: default
+  labels:
+    app: podinfo-svc-shift
+spec:
+  ports:
+    - name: http
+      port: 9898
+      protocol: TCP
+      targetPort: 9898
+  selector:
+    app: podinfo
+    release: podinfo-v1
+  sessionAffinity: None
+  type: ClusterIP
+

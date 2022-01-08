@@ -114,6 +114,8 @@ There are two important details about this ingress configuration:
 
 * The annotation `nginx.ingress.kubernetes.io/upstream-vhost: nginx-cache-v2.whitelabel-dev.svc.cluster.local` is **NOT** set here.  Setting this has the effect of altering the Host header to the value specified, and istio routes based on the Host header.  We use this later (below) with a separate Ingress resource to apply VirtualService routing for specific hosts where we want Virtual Services to apply.
 
+## Testing what you have this far
+
 To test the setup thus far, confirm at this point that you can see the ingress working and communicate with the podinfo container.  Start by checking whether the nginx-ingress service has an external-ip/port that you can access it at:
 
 ```
